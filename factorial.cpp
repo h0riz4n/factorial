@@ -1,35 +1,70 @@
 #include <iostream>
+#include <vector>
+#include <thread>
+#include <mutex>
 #include <future>
+#include <chrono>
+#include <cstdlib>
 
-// Функция для вычисления произведения чисел от start до end
-long long partialFactorial(int start, int end) {
-    long long result = 1;
-    for (int i = start; i <= end; i++) {
-        result *= i;
+std::mutex resultMutex;
+long long result = 1;
+
+// Function to calculate part of the factorial
+void factorialSegment(int start, int end, std::promise<long long>&& pr) {
+    long long segmentResult = 1;
+    for (int i = start; i <= end; ++i) {
+        segmentResult *= i;
     }
-    return result;
-}
-
-// Основная многопоточная функция факториала
-long long factorial(int n) {
-    if (n <= 1) return 1; // Базовый случай
-
-    int mid = n / 2; // Делим диапазон на две части
-
-    // Запускаем асинхронный поток для первой половины
-    std::future<long long> firstHalf = std::async(std::launch::async, partialFactorial, 1, mid);
     
-    // Вычисляем вторую половину в основном потоке
-    long long secondHalf = partialFactorial(mid + 1, n);
-
-    // Собираем результат
-    return firstHalf.get() * secondHalf;
+    std::lock_guard<std::mutex> lock(resultMutex);
+    result *= segmentResult;
+    pr.set_value(segmentResult);
 }
 
 int main() {
-    int n;
-    std::cout << "Введите число: ";
-    std::cin >> n;
+    system("chcp 65001"); // Set UTF-8 output for Windows console
 
-    std::cout << "Факториал числа: " << factorial(n) << std::endl;
+    int number;
+    int threadsCount;
+
+    std::cout << "Введите число для вычисления факториала: ";
+    std::cin >> number;
+
+    std::cout << "Введите количество потоков: ";
+    std::cin >> threadsCount;
+
+    if (number < 1 || threadsCount < 1) {
+        std::cout << "Неверный формат данных\n";
+        return 1;
+    }
+
+    // Determine how to divide work among threads
+    std::vector<std::thread> threads;
+    std::vector<std::future<long long>> futures;
+    int chunkSize = number / threadsCount;
+    int start = 1;
+
+    auto startTime = std::chrono::high_resolution_clock::now();
+
+    for (int i = 0; i < threadsCount; ++i) {
+        int end = (i == threadsCount - 1) ? number : start + chunkSize - 1;
+        std::promise<long long> p;
+        futures.push_back(p.get_future());
+        
+        threads.emplace_back(factorialSegment, start, end, std::move(p));
+        start = end + 1;
+    }
+
+    // Wait for all threads to complete
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
+
+    std::cout << "Факториал числа " << number << " равен " << result << std::endl;
+    std::cout << "Время выполнения: " << duration.count() << " нс." << std::endl;
+
+    return 0;
 }
